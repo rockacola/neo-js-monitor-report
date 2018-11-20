@@ -1,0 +1,22 @@
+{
+  "name": "neo-js-monitor-report",
+  "version": "0.1.0",
+  "description": "",
+  "main": "index",
+  "scripts": {
+    "rebuild": "rm -rf ./node_modules && npm install",
+    "rebuild:hard": "rm -f ./package-lock.json && npm run rebuild"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rockacola/neo-js-monitor-report.git"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "lodash": "^4.17.11",
+    "moment": "^2.22.2",
+    "mongoose": "4.13.14",
+    "node-log-it": "^2.0.0"
+  },
+  "devDependencies": {}
+}
