@@ -2,6 +2,7 @@ const _ = require('lodash')
 const moment = require('moment')
 const mongoose = require('mongoose')
 const Logger = require('node-log-it').Logger
+const MathHelper = require('./lib/math-helper')
 mongoose.Promise = global.Promise
 
 process.on('unhandledRejection', (reason, promise) => {
@@ -18,12 +19,10 @@ const COLLECTION_EP_REPORTS = 'endpoint_reports'
  * If undefined, then it'll be based on the timestamp of first log.
  * In milliseconds.
  */
-// const START_TIMESTAMP = undefined
-const START_TIMESTAMP = 1542763597000
+const START_TIMESTAMP = undefined
+// const START_TIMESTAMP = 1542763597000
 const VERSION = require('./package.json').version
-// console.log('VERSION:', VERSION)
 const ENDPOINTS = require('./lib/endpoints.json')
-// console.log('ENDPOINTS:', ENDPOINTS)
 mongoose.connect(CONNECTION, { useMongoClient: true }) // NOTE: This is async
 
 // -- Implementation
@@ -99,13 +98,13 @@ class App {
         reportTimestamp: Number,
         period: Number,
         endpoint: String,
-        averageLatency: Number,
         meanLatency: Number,
-        averageShapedLatency: Number,
+        medianLatency: Number,
         meanShapedLatency: Number,
         hasUserAgentChanged: Boolean,
         startUserAgent: String,
         endUserAgent: String,
+        meanReliability: Number,
         logCount: Number,
         probeCount: Number,
         reportVersion: String,
@@ -190,7 +189,7 @@ class App {
 
     const logs = await this.getProbeLogs(endpoint, fromMoment, toMoment)
     this.logger.debug('logs.length:', logs.length)
-    this.logger.debug('logs:', logs)
+    // this.logger.debug('logs:', logs)
 
     // Create empty report if there's no logs available
     if (logs.length === 0) {
@@ -207,28 +206,30 @@ class App {
   generateReportDocument(endpoint, fromMoment, period, logs) {
     this.logger.debug('generateReportDocument triggered.')
 
-    const averageLatency = 0
-    const meanLatency = 0
-    const averageShapedLatency = 0
-    const meanShapedLatency = 0
-    const hasUserAgentChanged = false
-    const startUserAgent = ''
-    const endUserAgent = ''
-    const averageReliability = 0
-    const probeCount = 0
+    const latencyLogs = _.filter(logs, (log) => _.isNumber(log.latency))
+    const shapedLatencyLogs = _.filter(logs, (log) => _.isNumber(log.shapedLatency))
+    const reliabilityLogs = _.filter(logs, (log) => _.isNumber(log.reliability))
+
+    const meanLatency = (latencyLogs.length > 0) ? _.meanBy(latencyLogs, 'latency') : undefined
+    const medianLatency = (latencyLogs.length > 0) ? MathHelper.median(_.map(latencyLogs, 'latency')) : undefined
+    const meanShapedLatency =  (shapedLatencyLogs.length > 0) ? _.meanBy(shapedLatencyLogs, 'shapedLatency') : undefined
+    const hasUserAgentChanged = (_.uniqBy(logs, 'userAgent').length > 1) ? true : false
+    const startUserAgent = _.min(logs, 'createdAt').userAgent
+    const endUserAgent = _.max(logs, 'createdAt').userAgent
+    const meanReliability = (reliabilityLogs.length > 0) ? _.meanBy(reliabilityLogs, 'reliability') : undefined
+    const probeCount = _.uniqBy(logs, 'probeId').length
 
     const data = {
       reportTimestamp: fromMoment.unix(),
       period,
       endpoint,
-      averageLatency,
       meanLatency,
-      averageShapedLatency,
+      medianLatency,
       meanShapedLatency,
       hasUserAgentChanged,
       startUserAgent,
       endUserAgent,
-      averageReliability,
+      meanReliability,
       logCount: logs.length,
       probeCount,
       reportVersion: VERSION,
