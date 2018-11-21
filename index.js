@@ -24,6 +24,10 @@ mongoose.connect(CONNECTION, { useMongoClient: true }) // NOTE: This is async
 
 class App {
   constructor() {
+    // -- Init
+    this.toKeepRunning = true
+    this.isCurrentlyReporting = false
+
     // -- Bootstrap
     this.logger = new Logger('Probe', { level: 'debug' })
     this.probeLogModel = this.getProbeLogModel()
@@ -40,34 +44,46 @@ class App {
   }
 
   /**
-   * Not rounded.
+   * @returns Promise<object>
    */
-  getStartTimestamp() {
-    this.logger.debug('getStartTimestamp triggered.')
+  getStartMoment() {
+    this.logger.debug('getStartMoment triggered.')
     if (START_TIMESTAMP !== undefined) {
       this.logger.debug('Configurable constant START_TIMESTAMP found.')
-      return Promise.resolve(START_TIMESTAMP)
+      const m = new moment(START_TIMESTAMP).utc().startOf('minute')
+      return Promise.resolve(m)
     } else {
+      //
       this.logger.debug('Querying for the timestamp of the earliest log.')
       return new Promise((resolve, reject) => {
-        this.probeLogModel
-          .findOne()
-          .sort({ createdAt: 1 })
-          .exec((err, res) => {
-            if (err) {
-              this.logger.warn('getProbeLogModel.findOne() execution failed. error:', err.message)
-              return reject(err)
-            }
-            if (!res) {
-              return reject(new Error('No result found.'))
-            }
-            // this.logger.info('probeLogModel.findOne() res:', res)
-            const createdAt = res.createdAt
-            const createdAtTimestamp = createdAt.getTime()
-            return resolve(createdAtTimestamp)
+        this.getEarliestProbeLogDocument()
+          .then((res) => {
+            const m = new moment(res.createdAt).utc().startOf('minute')
+            return resolve(m)
           })
+          .catch((err) => reject(err))
       })
     }
+  }
+
+  getEarliestProbeLogDocument() {
+    this.logger.debug('getEarliestProbeLogDocument triggered.')
+
+    return new Promise((resolve, reject) => {
+      this.probeLogModel
+        .findOne()
+        .sort({ createdAt: 1 })
+        .exec((err, res) => {
+          if (err) {
+            this.logger.warn('getProbeLogModel.findOne() execution failed. error:', err.message)
+            return reject(err)
+          }
+          if (!res) {
+            return reject(new Error('No result found.'))
+          }
+          return resolve(res)
+        })
+    })
   }
 
   getEndpointReportsModel() {
@@ -112,33 +128,59 @@ class App {
     return mongoose.models[COLLECTION_LOGS] || mongoose.model(COLLECTION_LOGS, schema)
   }
 
-  async run() {
+  async performFirstRun() {
+    this.logger.debug('performFirstRun triggered.')
+
+    let currentMoment = await this.getStartMoment()
+    this.logger.info('getStartMoment():', currentMoment)
+
+    while(this.toKeepRunning) {
+      // Verify if there's an existing reporting executing
+      if (this.isCurrentlyReporting) {
+        this.logger.info('A reporting is happening right now, wait out...')
+        await this.sleep(1000)
+        return
+      }
+
+      // Verify if we reached to present time
+      if (currentMoment >= (new moment()).startOf('minute')) {
+        this.logger.info('We have reached to present time where not enough logs available for reporting, wait out...')
+        await this.sleep(15 * 1000)
+        return
+      }
+
+      // Generate minute report
+      this.isCurrentlyReporting = true
+      const fromMoment = currentMoment
+      const toMoment = currentMoment.clone().add(59, 'seconds')
+      await this.generateMinuteReports(fromMoment, toMoment)
+
+      // Iterate
+      currentMoment.add(1, 'minutes')
+      this.isCurrentlyReporting = false
+    }
+  }
+
+  async generateMinuteReports(fromMoment, toMoment) {
+    this.logger.info('generate report from:', fromMoment, 'to:', toMoment)
+    await this.sleep(1 * 1000)
+
+    // TODO
+  }
+
+  run() {
     this.logger.debug('run triggered.')
 
-    await this.sleep(2000) // A workaround to make sure the database connection is ready
-
-    // find starting timestamp of interest, convert that to the nearest minute (round down)
-    const startTimestamp = await this.getStartTimestamp() // TODO: validate
-    this.logger.info('startTimestamp:', startTimestamp)
-    const startMinuteMoment = new moment(startTimestamp).utc().startOf('minute')
-    this.logger.info('startMinuteMoment.unix():', startMinuteMoment.unix())
-    const endMinuteMoment = new moment().utc().startOf('minute') // To be exclusive
-    this.logger.info('endMinuteMoment.unix():', endMinuteMoment.unix())
-    const INCREMENT = 60 // 1 minute
-
-    for (let i=startMinuteMoment; i<endMinuteMoment; i.add(INCREMENT, 'seconds')) {
-      this.logger.info('>', i.unix())
-      await this.sleep(100)
-    }
-
-    // iterate from the said timestamp to NOW
-
-      // see if report already made for the said timestamp, if so, skip
-
-      // determine a start/end timestamp range of interest (inclusive)
-
-    // when backfill is complete, passively check for interval and see if new minute report can be generated
-
+    mongoose
+      .connect(CONNECTION, { useMongoClient: true })
+      .then(() => {
+        this.logger.info('database connected.')
+        this.performFirstRun()
+      })
+      .catch((err) => {
+        this.logger.error('Error establish MongoDB connection. Message:', err.message)
+        throw err
+      })
   }
 }
 
