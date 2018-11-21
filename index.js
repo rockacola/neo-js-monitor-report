@@ -144,14 +144,14 @@ class App {
       if (this.isCurrentlyReporting) {
         this.logger.info('A reporting is happening right now, wait out...')
         await this.sleep(1000)
-        return
+        continue
       }
 
       // Verify if we reached to present time
       if (currentMoment >= (new moment()).startOf('minute')) {
         this.logger.info('We have reached to present time where not enough logs available for reporting, wait out...')
         await this.sleep(15 * 1000)
-        return
+        continue
       }
 
       // Generate minute report
@@ -210,9 +210,9 @@ class App {
     const shapedLatencyLogs = _.filter(logs, (log) => _.isNumber(log.shapedLatency))
     const reliabilityLogs = _.filter(logs, (log) => _.isNumber(log.reliability))
 
-    const meanLatency = (latencyLogs.length > 0) ? _.meanBy(latencyLogs, 'latency') : undefined
-    const medianLatency = (latencyLogs.length > 0) ? MathHelper.median(_.map(latencyLogs, 'latency')) : undefined
-    const meanShapedLatency =  (shapedLatencyLogs.length > 0) ? _.meanBy(shapedLatencyLogs, 'shapedLatency') : undefined
+    const meanLatency = (latencyLogs.length > 0) ? _.round(_.meanBy(latencyLogs, 'latency'), 0) : undefined
+    const medianLatency = (latencyLogs.length > 0) ? _.round(MathHelper.median(_.map(latencyLogs, 'latency')), 0) : undefined
+    const meanShapedLatency =  (shapedLatencyLogs.length > 0) ? _.round(_.meanBy(shapedLatencyLogs, 'shapedLatency'), 0) : undefined
     const hasUserAgentChanged = (_.uniqBy(logs, 'userAgent').length > 1) ? true : false
     const startUserAgent = _.min(logs, 'createdAt').userAgent
     const endUserAgent = _.max(logs, 'createdAt').userAgent
