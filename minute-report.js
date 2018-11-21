@@ -7,4 +7,4 @@ process.on('unhandledRejection', (reason, promise) => {
 // -- Execution
 
 const app = new App()
-app.run()
+app.runMinuteReport()
