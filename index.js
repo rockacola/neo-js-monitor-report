@@ -9,6 +9,7 @@ process.on('unhandledRejection', (reason, promise) => {
 })
 
 // -- Config
+
 const CONNECTION = 'mongodb://localhost/monitor_mainnet'
 const COLLECTION_LOGS = 'probe_logs'
 const COLLECTION_EP_REPORTS = 'endpoint_reports'
@@ -17,7 +18,12 @@ const COLLECTION_EP_REPORTS = 'endpoint_reports'
  * If undefined, then it'll be based on the timestamp of first log.
  * In milliseconds.
  */
-const START_TIMESTAMP = undefined
+// const START_TIMESTAMP = undefined
+const START_TIMESTAMP = 1542763597000
+const VERSION = require('./package.json').version
+// console.log('VERSION:', VERSION)
+const ENDPOINTS = require('./lib/endpoints.json')
+// console.log('ENDPOINTS:', ENDPOINTS)
 mongoose.connect(CONNECTION, { useMongoClient: true }) // NOTE: This is async
 
 // -- Implementation
@@ -90,8 +96,7 @@ class App {
     this.logger.debug('getEndpointReportsModel triggered.')
     const schema = new mongoose.Schema(
       {
-        endpoint: String,
-        timestamp: Number,
+        reportTimestamp: Number,
         period: Number,
         endpoint: String,
         averageLatency: Number,
@@ -103,6 +108,7 @@ class App {
         endUserAgent: String,
         logCount: Number,
         probeCount: Number,
+        reportVersion: String,
       },
       { timestamps: true }
     )
@@ -153,7 +159,7 @@ class App {
       this.isCurrentlyReporting = true
       const fromMoment = currentMoment
       const toMoment = currentMoment.clone().add(59, 'seconds')
-      await this.generateMinuteReports(fromMoment, toMoment)
+      await this.generateReports(fromMoment, toMoment)
 
       // Iterate
       currentMoment.add(1, 'minutes')
@@ -161,11 +167,147 @@ class App {
     }
   }
 
-  async generateMinuteReports(fromMoment, toMoment) {
-    this.logger.info('generate report from:', fromMoment, 'to:', toMoment)
+  async generateReports(fromMoment, toMoment) {
+    this.logger.debug('generateReports triggered. fromMoment:', fromMoment, 'toMoment:', toMoment)
+
+    for(let i=0; i<ENDPOINTS.length; i++) {
+      const endpoint = ENDPOINTS[i].endpoint
+      await this.generateReportByEndpoint(endpoint, fromMoment, toMoment)
+    }
+  }
+
+  async generateReportByEndpoint(endpoint, fromMoment, toMoment) {
+    this.logger.debug('generateReportByEndpoint triggered. endpoint:', endpoint)
     await this.sleep(1 * 1000)
 
-    // TODO
+    // Check for existing report(s)
+    const reportCount = await this.countReport(endpoint, fromMoment, toMoment)
+    this.logger.debug('reportCount:', reportCount)
+    if (reportCount > 0) {
+      this.logger.info('There are already existing report(s) for endpoint:', endpoint, 'count:', reportCount)
+      return
+    }
+
+    const logs = await this.getProbeLogs(endpoint, fromMoment, toMoment)
+    this.logger.debug('logs.length:', logs.length)
+    this.logger.debug('logs:', logs)
+
+    // Create empty report if there's no logs available
+    if (logs.length === 0) {
+      this.logger.info('Create black report for endpoint:', endpoint)
+      const reportDoc = this.generateBlankReportDocument(endpoint, fromMoment, 60)
+      await this.setReportDocument(reportDoc)
+    }
+
+    // Create report
+    const reportDoc = this.generateReportDocument(endpoint, fromMoment, 60, logs)
+    await this.setReportDocument(reportDoc)
+  }
+
+  generateReportDocument(endpoint, fromMoment, period, logs) {
+    this.logger.debug('generateReportDocument triggered.')
+
+    const averageLatency = 0
+    const meanLatency = 0
+    const averageShapedLatency = 0
+    const meanShapedLatency = 0
+    const hasUserAgentChanged = false
+    const startUserAgent = ''
+    const endUserAgent = ''
+    const averageReliability = 0
+    const probeCount = 0
+
+    const data = {
+      reportTimestamp: fromMoment.unix(),
+      period,
+      endpoint,
+      averageLatency,
+      meanLatency,
+      averageShapedLatency,
+      meanShapedLatency,
+      hasUserAgentChanged,
+      startUserAgent,
+      endUserAgent,
+      averageReliability,
+      logCount: logs.length,
+      probeCount,
+      reportVersion: VERSION,
+    }
+    return data
+  }
+
+  generateBlankReportDocument(endpoint, fromMoment, period) {
+    this.logger.debug('generateBlankReportDocument triggered.')
+    const data = {
+      reportTimestamp: fromMoment.unix(),
+      period,
+      endpoint,
+      logCount: 0,
+      probeCount: 0,
+      reportVersion: VERSION,
+    }
+    return data
+  }
+
+  async setReportDocument(doc) {
+    this.logger.debug('setReportDocument triggered.')
+
+    return new Promise((resolve, reject) => {
+      this.endpointReportsModel(doc).save((err) => {
+        if (err) {
+          this.logger.warn('endpointReportsModel().save() execution failed.')
+          reject(err)
+        }
+        return resolve()
+      })
+    })
+  }
+
+  async getProbeLogs(endpoint, fromMoment, toMoment) {
+    this.logger.debug('countReport triggered.')
+
+    return new Promise((resolve, reject) => {
+      this.probeLogModel
+        .find({
+          endpoint: endpoint,
+          createdAt: {
+            $gte: fromMoment.toDate(),
+            $lte: toMoment.toDate(),
+          },
+        })
+        .exec((err, res) => {
+          if (err) {
+            this.logger.warn('probeLogModel.find() execution failed. error:', err.message)
+            return reject(err)
+          }
+          if (!res) {
+            return reject(new Error('No result found.'))
+          }
+          return resolve(res)
+        })
+    })
+  }
+
+  async countReport(endpoint, fromMoment, toMoment) {
+    this.logger.debug('countReport triggered.')
+
+    return new Promise((resolve, reject) => {
+      this.endpointReportsModel
+        .count({
+          endpoint: endpoint,
+          reportTimestamp: {
+            $gte: fromMoment.unix(),
+            $lte: toMoment.unix(),
+          },
+        })
+        .exec((err, res) => {
+          if (err) {
+            this.logger.warn('endpointReportsModel.count() execution failed. error:', err.message)
+            return reject(err)
+          }
+          return resolve(res)
+        })
+    })
   }
 
   run() {
